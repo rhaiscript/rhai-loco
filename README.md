@@ -8,6 +8,8 @@ Rhai Engine Integration for Loco
 [![crates.io](https://img.shields.io/crates/d/rhai-loco?logo=rust)](https://crates.io/crates/rhai-loco/)
 [![API Docs](https://docs.rs/rhai-loco/badge.svg?logo=docs-rs)](https://docs.rs/rhai-loco/)
 
+![Loco](https://private-user-images.githubusercontent.com/83390/294831763-992d215a-3cd3-42ee-a1c7-de9fd25a5bac.png?jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3MDg3NjkwOTUsIm5iZiI6MTcwODc2ODc5NSwicGF0aCI6Ii84MzM5MC8yOTQ4MzE3NjMtOTkyZDIxNWEtM2NkMy00MmVlLWExYzctZGU5ZmQyNWE1YmFjLnBuZz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNDAyMjQlMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjQwMjI0VDA5NTk1NVomWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPTViMWI2MGVjMDU0MTU1ZTBkODFhMzAzODJkZDNmNjU5YmZkZTZmZDE3NGI4OTczMzRkZGJmODczZWEyOWVjNDgmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JmFjdG9yX2lkPTAma2V5X2lkPTAmcmVwb19pZD0wIn0._dpunIlEJrrtjGVYTZ0RsssQuHKLaX5MmeS0P1qPzgI)
+
 This crate adds [Rhai](https://rhai.rs) script support to [Loco](https://loco.rs).
 
 
