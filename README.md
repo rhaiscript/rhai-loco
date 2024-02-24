@@ -2,7 +2,6 @@ Rhai Engine Integration for Loco
 ================================
 
 ![GitHub last commit](https://img.shields.io/github/last-commit/rhaiscript/rhai-loco?logo=github)
-[![Build Status](https://github.com/rhaiscript/rhai-loco/workflows/Build/badge.svg)](https://github.com/rhaiscript/rhai-loco/actions)
 [![Stars](https://img.shields.io/github/stars/rhaiscript/rhai-loco?style=flat&logo=github)](https://github.com/rhaiscript/rhai-loco)
 [![License](https://img.shields.io/crates/l/rhai-loco)](https://github.com/license/rhaiscript/rhai-loco)
 [![crates.io](https://img.shields.io/crates/v/rhai-loco?logo=rust)](https://crates.io/crates/rhai-loco/)
