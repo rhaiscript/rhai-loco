@@ -17,80 +17,8 @@ Usage
 Import `rhai-loco` inside `Cargo.toml`:
 
 ```toml
-┌────────────┐
-│ Cargo.toml │
-└────────────┘
-
 [dependencies]
 rhai-loco = "0.1.0"
-```
-
-
-Run a Rhai script in Loco Request
----------------------------------
-
-The scripting engine can be extracted in axum using `ScriptingEngine`.
-
-For example, the following adds custom scripting support to the login authentication process:
-
-```rust
-┌─────────────────────────┐
-│ src/controllers/auth.rs │
-└─────────────────────────┘
-
-// Import the scripting engine types
-use rhai_loco::{RhaiScript, ScriptingEngine};
-
-pub async fn login(
-    State(ctx): State<AppContext>,
-    // Extract the scripting engine
-    ScriptingEngine(script): ScriptingEngine<RhaiScript>,
-    Json(mut params): Json<LoginParams>,
-) -> Result<Json<LoginResponse>> {
-    // Use `run_script_if_exists` to run a function `login` from a script
-    // `on_login.rhai` if it exists under `assets/scripts/`.
-    //
-    // Use `run_script` if the script is required to exist or an error is returned.
-    let result = script
-        .run_script_if_exists("on_login", &mut params, "login", ())
-        //                    ^ script file            ^ function name
-        //                                ^ data mapped to `this` in script
-        //                                                      ^^ function arguments
-        .or_else(|err| script.convert_runtime_error(err, |msg| unauthorized(&msg)))?;
-        //                                               ^^^^^^^^^^^^^^^^^^^^^^^^
-        //                      turn any runtime error into an unauthorized response
-
-                :
-                :
-}
-```
-
-This calls a function named `login` within the script file `on_login.rhai` if it exists:
-
-```rust
-┌──────────────────────────────┐
-│ assets/scripts/on_login.rhai │
-└──────────────────────────────┘
-
-// Function for custom login logic
-fn login() {
-    // Can import other Rhai modules!
-    import "super/secure/vault" as vault;
-
-    debug(`Trying to login with user = ${this.user} and password = ${this.password}`);
-
-    let security_context = vault.extensive_checking(this.user, this.password);
-
-    if security_context.passed {
-        // Data values can be changed!
-        this.user = security_context.masked_user;
-        this.password = security_context.masked_password;
-        return security_context.id;
-    } else {
-        vault::black_list(this.user);
-        throw `The user ${this.user} has been black-listed!`;
-    }
-}
 ```
 
 
@@ -198,5 +126,125 @@ fn super_duper(vars) {
 
     // Return new value
     `${this}, ${name}!`
+}
+```
+
+
+Run a Rhai script in Loco Request
+---------------------------------
+
+The scripting engine is first injected into Loco via an initializer:
+
+```rust
+┌────────────┐
+│ src/app.rs │
+└────────────┘
+
+async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
+    Ok(vec![
+        // Add the scripting engine initializer
+        Box::new(rhai_loco::ScriptingEngineInitializer),
+        Box::new(initializers::view_engine::ViewEngineInitializer),
+    ])
+}
+```
+
+The scripting engine can then be extracted in requests using `ScriptingEngine`.
+
+For example, the following adds custom scripting support to the login authentication process:
+
+```rust
+┌─────────────────────────┐
+│ src/controllers/auth.rs │
+└─────────────────────────┘
+
+// Import the scripting engine types
+use rhai_loco::{RhaiScript, ScriptingEngine};
+
+pub async fn login(
+    State(ctx): State<AppContext>,
+    // Extract the scripting engine
+    ScriptingEngine(script): ScriptingEngine<RhaiScript>,
+    Json(mut params): Json<LoginParams>,
+) -> Result<Json<LoginResponse>> {
+    // Use `run_script_if_exists` to run a function `login` from a script
+    // `on_login.rhai` if it exists under `assets/scripts/`.
+    //
+    // Use `run_script` if the script is required to exist or an error is returned.
+    let result = script
+        .run_script_if_exists("on_login", &mut params, "login", ())
+        //                    ^ script file            ^ function name
+        //                                ^ data mapped to `this` in script
+        //                                                      ^^ function arguments
+        .or_else(|err| script.convert_runtime_error(err, |msg| unauthorized(&msg)))?;
+        //                                               ^^^^^^^^^^^^^^^^^^^^^^^^
+        //                      turn any runtime error into an unauthorized response
+
+                :
+                :
+}
+```
+
+This calls a function named `login` within the script file `on_login.rhai` if it exists:
+
+```rust
+┌──────────────────────────────┐
+│ assets/scripts/on_login.rhai │
+└──────────────────────────────┘
+
+// Function for custom login logic
+fn login() {
+    // Can import other Rhai modules!
+    import "super/secure/vault" as vault;
+
+    debug(`Trying to login with user = ${this.user} and password = ${this.password}`);
+
+    let security_context = vault.extensive_checking(this.user, this.password);
+
+    if security_context.passed {
+        // Data values can be changed!
+        this.user = security_context.masked_user;
+        this.password = security_context.masked_password;
+        return security_context.id;
+    } else {
+        vault::black_list(this.user);
+        throw `The user ${this.user} has been black-listed!`;
+    }
+}
+```
+
+
+Custom Engine Setup
+-------------------
+
+In order to customize the Rhai scripting engine, for example to add custom functions or custom types
+support, it is easy define a custom initializer based on the existing template:
+
+```rust
+use axum::{Router as AxumRouter, Extension};
+use loco_rs::app::AppContext;
+use loco_rs::prelude::*;
+use rhai_loco::RhaiScript;
+
+pub struct CustomScriptingEngineInitializer;
+
+pub const SCRIPTS_DIR: &'static str = "assets/scripts/";
+
+#[async_trait]
+impl Initializer for CustomScriptingEngineInitializer {
+    fn name(&self) -> String {
+        "scripting-engine".to_string()
+    }
+
+    async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<AxumRouter> {
+        // Use `RhaiScript::new_with_setup` to customize the Rhai engine
+        let engine = RhaiScript::new_with_setup(SCRIPTS_DIR, |engine| {
+                        :
+            // ... do custom setup of Rhai engine here ...
+                        :
+        })?;
+
+        Ok(router.layer(Extension(ScriptingEngine::from(engine))))
+    }
 }
 ```
