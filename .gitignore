@@ -1,0 +1,11 @@
+target/
+Cargo.lock
+.vscode/
+.cargo/
+clippy.toml
+Rhai.toml
+**/*.bat
+**/*.exe
+.idea/
+.idea
+.idea/*
