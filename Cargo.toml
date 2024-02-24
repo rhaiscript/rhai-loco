@@ -20,6 +20,10 @@ async-trait = { version = "0.1.74" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+[features]
+metadata = ["rhai/metadata"]
+internals = ["rhai/internals"]
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
