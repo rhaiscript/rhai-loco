@@ -8,8 +8,6 @@ Rhai Engine Integration for Loco
 [![crates.io](https://img.shields.io/crates/d/rhai-loco?logo=rust)](https://crates.io/crates/rhai-loco/)
 [![API Docs](https://docs.rs/rhai-loco/badge.svg?logo=docs-rs)](https://docs.rs/rhai-loco/)
 
-![Loco](https://private-user-images.githubusercontent.com/83390/294831763-992d215a-3cd3-42ee-a1c7-de9fd25a5bac.png?jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3MDg3NjkwOTUsIm5iZiI6MTcwODc2ODc5NSwicGF0aCI6Ii84MzM5MC8yOTQ4MzE3NjMtOTkyZDIxNWEtM2NkMy00MmVlLWExYzctZGU5ZmQyNWE1YmFjLnBuZz9YLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSUFWQ09EWUxTQTUzUFFLNFpBJTJGMjAyNDAyMjQlMkZ1cy1lYXN0LTElMkZzMyUyRmF3czRfcmVxdWVzdCZYLUFtei1EYXRlPTIwMjQwMjI0VDA5NTk1NVomWC1BbXotRXhwaXJlcz0zMDAmWC1BbXotU2lnbmF0dXJlPTViMWI2MGVjMDU0MTU1ZTBkODFhMzAzODJkZDNmNjU5YmZkZTZmZDE3NGI4OTczMzRkZGJmODczZWEyOWVjNDgmWC1BbXotU2lnbmVkSGVhZGVycz1ob3N0JmFjdG9yX2lkPTAma2V5X2lkPTAmcmVwb19pZD0wIn0._dpunIlEJrrtjGVYTZ0RsssQuHKLaX5MmeS0P1qPzgI)
-
 This crate adds [Rhai](https://rhai.rs) script support to [Loco](https://loco.rs).
 
 
@@ -40,7 +38,7 @@ async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<Ax
 
     if Path::new(I18N_DIR).exists() {
         debug!("locales dir = {I18N_DIR}");
-        let arc = ArcLoader::builder(I18N_DIR, unic_langid::langid!("en-US"))
+        let arc = ArcLoader::builder(I18N_DIR, unic_langid::langid!("de-DE"))
             .shared_resources(Some(&[I18N_SHARED.into()]))
             .customize(|bundle| bundle.set_use_isolating(false))
             .build()
@@ -51,12 +49,25 @@ async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<Ax
         info!("locales loaded");
     }
 
-    // Add the following to enable scripted Tera filters >>>
+    ///////////////////////////////////////////////////////////////////////////////////
+    // Add the following to enable scripted Tera filters
     let path = Path::new("assets/scripts/tera/filters");
-    if path.exists() {
-        rhai_loco::RhaiScript::register_tera_filters(&mut tera_engine, path)?;
+    if path.is_dir() {
+        // This code is duplicated from above to expose the i18n `t` function to Rhai scripts
+        let i18n = if Path::new(I18N_DIR).is_dir() {
+            let arc = ArcLoader::builder(I18N_DIR, unic_langid::langid!("de-DE"))
+                .shared_resources(Some(&[I18N_SHARED.into()]))
+                .customize(|bundle| bundle.set_use_isolating(false))
+                .build()
+                .map_err(|e| Error::string(&e.to_string()))?;
+            Some(FluentLoader::new(arc))
+        } else {
+            None
+        };
+        rhai_loco::RhaiScript::register_tera_filters(&mut tera_engine, path, i18n)?;
     }
-    // <<< End addition
+    // End addition
+    ///////////////////////////////////////////////////////////////////////////////////
 
     Ok(router.layer(Extension(ViewEngine::from(tera_engine))))
 }
@@ -129,6 +140,84 @@ fn super_duper(vars) {
     // Return new value
     `${this}, ${name}!`
 }
+```
+
+### Scripted filters as conversion/formatting tool
+
+Scripted filters can be very flexible for ad-hoc conversion/formatting purposes because they enable
+rapid iterations and changes without recompiling.
+
+```rust
+┌────────────────────┐
+│ Rhai filter script │
+└────────────────────┘
+
+/// Say we have in-house status codes that we need to convert into text
+/// for display with i18n support...
+fn status(vars) {
+    switch this {
+        case "P" => t("Pending", lang),
+        case "A" => t("Active", lang),
+        case "C" => t("Cancelled", lang),
+        case "X" => t("Deleted", lang),
+    }
+}
+
+/// Say we have CSS classes that we need to add based on certain data values
+fn count_css(vars) {
+    if this.count > 1 {
+        "error more-than-one"
+    } else if this.count == 0 {
+        "error missing-value"
+    } else {
+        "success"
+    }
+}
+```
+
+```html
+┌───────────────┐
+│ Tera template │
+└───────────────┘
+
+<!-- use script to determine the CSS class -->
+<div id="record" class="{{ value | count_css }}">
+    <!-- use script to map the status display -->
+    <span>{{ value.status | status(lang="de-DE") }} : {{ value.count }}</span>
+</div>
+```
+
+The above is equivalent to the following Tera template.
+
+Technically speaking, you either maintain such ad-hoc behavior in script or inside the Tera template
+itself, but doing so in script allows for reuse and a cleaner template.
+
+```html
+┌───────────────┐
+│ Tera template │
+└───────────────┘
+
+<div id="record" class="{% if value.count > 1 %}
+                            error more-than-one
+                        {% elif value.count == 0 %}
+                            error missing-value
+                        {% else %}
+                            success
+                        {% endif %}">
+
+    <span>
+        {% if value.status == "P" %}
+            t(key = "Pending", lang = "de-DE")
+        {% elif value.status == "A" %}
+            t(key = "Active", lang = "de-DE")
+        {% elif value.status == "C" %}
+            t(key = "Cancelled", lang = "de-DE")
+        {% elif value.status == "D" %}
+            t(key = "Deleted", lang = "de-DE")
+        {% endif %}
+        : {{ value.count }}
+    </span>
+</div>
 ```
 
 

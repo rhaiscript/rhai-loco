@@ -243,6 +243,9 @@ impl RhaiScript {
 
     /// Register Tera filters from Rhai scripts.
     ///
+    /// If the Tera i18n function `t` is provided, it is also registered into the Rhai [`Engine`]
+    /// for use in filter scripts.
+    ///
     /// # Errors
     ///
     /// * Error if the filter scripts directory does not exist.
@@ -250,6 +253,7 @@ impl RhaiScript {
     pub fn register_tera_filters(
         tera: &mut TeraView,
         scripts_path: impl AsRef<Path>,
+        i18n: Option<impl tera::Function + 'static>,
     ) -> Result<()> {
         let path = scripts_path.as_ref();
 
@@ -268,17 +272,49 @@ impl RhaiScript {
             engine
                 .on_print(|message| info!(message))
                 .on_debug(|message, source, pos| debug!(?message, source, position = ?pos));
+
+            if let Some(i18n) = i18n {
+                let i18n = Arc::new(i18n);
+
+                let t = i18n.clone();
+                engine.register_fn("t", move |args: Map| -> RhaiResult<Dynamic> {
+                    let map: HashMap<String, Value> = args
+                        .into_iter()
+                        .map(|(k, v)| -> RhaiResult<(String, Value)> {
+                            Ok((k.to_string(), from_dynamic(&v)?))
+                        })
+                        .collect::<RhaiResult<_>>()?;
+                    match t.call(&map) {
+                        Ok(v) => Ok(to_dynamic(v)?),
+                        Err(e) => Err(e.to_string().into()),
+                    }
+                });
+
+                let t = i18n.clone();
+                engine.register_fn("t", move |key: &str, lang: &str| -> RhaiResult<Dynamic> {
+                    let mut map = HashMap::new();
+                    let _ = map.insert("key".to_string(), key.into());
+                    let _ = map.insert("lang".to_string(), lang.into());
+                    match t.call(&map) {
+                        Ok(v) => Ok(to_dynamic(v)?),
+                        Err(e) => Err(e.to_string().into()),
+                    }
+                });
+
+                info!("i18n function loaded into Rhai engine");
+            }
+
             engine
         });
 
         for entry in read_dir(path)? {
             let entry = entry?;
-            let path = entry.path();
+            let script = entry.path();
 
-            if path.is_dir() {
+            if script.is_dir() {
                 debug!(dir = ?entry.file_name().to_string_lossy(), "skip dir");
                 continue;
-            } else if path
+            } else if script
                 .extension()
                 .map_or(true, |ext| ext.to_string_lossy() != Self::SCRIPTS_EXT)
             {
@@ -286,8 +322,10 @@ impl RhaiScript {
                 continue;
             }
 
-            let mut ast = engine.compile_file(path.clone()).map_err(Error::msg)?;
-            ast.set_source(path.to_string_lossy().as_ref());
+            let mut ast = engine.compile_file(script.clone()).map_err(|err| {
+                Error::string(&(format!("`{}`: {err}", entry.file_name().to_string_lossy())))
+            })?;
+            ast.set_source(script.to_string_lossy().as_ref());
             let ast = Arc::new(ast);
             debug!(file = ?entry.file_name().to_string_lossy(), "compile script");
 
