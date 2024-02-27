@@ -18,7 +18,7 @@ Import `rhai-loco` inside `Cargo.toml`:
 
 ```toml
 [dependencies]
-rhai-loco = "0.1.0"
+rhai-loco = "0.2.0"
 ```
 
 
@@ -163,6 +163,15 @@ fn status(vars) {
     }
 }
 
+/// Use script to inject HTML also!
+/// The input value is used to select from the list of options
+fn all_status(vars) {`
+	<option value="P" ${if this == "P" { "selected" }}>t("Pending", lang)</option>
+	<option value="A" ${if this == "A" { "selected" }}>t("Active", lang)</option>
+	<option value="C" ${if this == "C" { "selected" }}>t("Cancelled", lang)</option>
+	<option value="X" ${if this == "X" { "selected" }}>t("Deleted", lang)</option>
+`}
+
 /// Say we have CSS classes that we need to add based on certain data values
 fn count_css(vars) {
     if this.count > 1 {
@@ -185,6 +194,13 @@ fn count_css(vars) {
     <!-- use script to map the status display -->
     <span>{{ value.status | status(lang="de-DE") }} : {{ value.count }}</span>
 </div>
+
+<!-- use script to inject HTML directly -->
+<select>
+	<option value="">t("All", "de-DE")</option>
+	<!-- avoid escaping as text via the `safe` filter -->
+	{{ "A" | all_status(lang="de-DE") | safe }}
+</select>
 ```
 
 The above is equivalent to the following Tera template.
