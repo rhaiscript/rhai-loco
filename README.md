@@ -166,10 +166,10 @@ fn status(vars) {
 /// Use script to inject HTML also!
 /// The input value is used to select from the list of options
 fn all_status(vars) {`
-	<option value="P" ${if this == "P" { "selected" }}>t("Pending", lang)</option>
-	<option value="A" ${if this == "A" { "selected" }}>t("Active", lang)</option>
-	<option value="C" ${if this == "C" { "selected" }}>t("Cancelled", lang)</option>
-	<option value="X" ${if this == "X" { "selected" }}>t("Deleted", lang)</option>
+    <option value="P" ${if this == "P" { "selected" }}>t("Pending", lang)</option>
+    <option value="A" ${if this == "A" { "selected" }}>t("Active", lang)</option>
+    <option value="C" ${if this == "C" { "selected" }}>t("Cancelled", lang)</option>
+    <option value="X" ${if this == "X" { "selected" }}>t("Deleted", lang)</option>
 `}
 
 /// Say we have CSS classes that we need to add based on certain data values
@@ -197,9 +197,9 @@ fn count_css(vars) {
 
 <!-- use script to inject HTML directly -->
 <select>
-	<option value="">t("All", "de-DE")</option>
-	<!-- avoid escaping as text via the `safe` filter -->
-	{{ "A" | all_status(lang="de-DE") | safe }}
+    <option value="">t("All", "de-DE")</option>
+    <!-- avoid escaping as text via the `safe` filter -->
+    {{ "A" | all_status(lang="de-DE") | safe }}
 </select>
 ```
 
@@ -240,7 +240,7 @@ itself, but doing so in script allows for reuse and a cleaner template.
 Run a Rhai script in Loco Request
 ---------------------------------
 
-The scripting engine is first injected into Loco via an initializer:
+The scripting engine is first injected into Loco via the `ScriptingEngineInitializer`:
 
 ```rust
 ┌────────────┐
@@ -250,7 +250,7 @@ The scripting engine is first injected into Loco via an initializer:
 async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
     Ok(vec![
         // Add the scripting engine initializer
-        Box::new(rhai_loco::ScriptingEngineInitializer),
+        Box::new(rhai_loco::ScriptingEngineInitializer::new(rhai_loco::SCRIPT_DIR)),
         Box::new(initializers::view_engine::ViewEngineInitializer),
     ])
 }
@@ -325,33 +325,23 @@ Custom Engine Setup
 -------------------
 
 In order to customize the Rhai scripting engine, for example to add custom functions or custom types
-support, it is easy define a custom initializer based on the existing template:
+support, it is easy to perform custom setup on the Rhai engine via `ScriptingEngineInitializerWithSetup`:
 
 ```rust
-use axum::{Router as AxumRouter, Extension};
-use loco_rs::app::AppContext;
-use loco_rs::prelude::*;
-use rhai_loco::RhaiScript;
+┌────────────┐
+│ src/app.rs │
+└────────────┘
 
-pub struct CustomScriptingEngineInitializer;
-
-pub const SCRIPTS_DIR: &'static str = "assets/scripts/";
-
-#[async_trait]
-impl Initializer for CustomScriptingEngineInitializer {
-    fn name(&self) -> String {
-        "scripting-engine".to_string()
-    }
-
-    async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<AxumRouter> {
-        // Use `RhaiScript::new_with_setup` to customize the Rhai engine
-        let engine = RhaiScript::new_with_setup(SCRIPTS_DIR, |engine| {
+async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
+    Ok(vec![
+        // Add the scripting engine initializer
+        Box::new(rhai_loco::ScriptingEngineInitializerWithSetup::new_with_setup(
+            rhai_loco::SCRIPT_DIR, |engine| {
                         :
             // ... do custom setup of Rhai engine here ...
                         :
-        })?;
-
-        Ok(router.layer(Extension(ScriptingEngine::from(engine))))
-    }
+        })),
+        Box::new(initializers::view_engine::ViewEngineInitializer),
+    ])
 }
 ```

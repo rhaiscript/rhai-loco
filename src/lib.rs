@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock, RwLock},
 };
-use tracing::{debug, info, trace_span};
+use tracing::{debug, info, trace, trace_span};
 
 // Re-export useful Rhai types and functions.
 pub use rhai::{
@@ -26,20 +26,16 @@ pub use rhai::{
 pub type RhaiResult<T> = std::result::Result<T, Box<EvalAltResult>>;
 use rhai::module_resolvers::FileModuleResolver;
 
+pub const ROOT: &str = "loco_rs::scripting::rhai_script";
+
 /// Global Rhai [`Engine`] instance.
 static ENGINE: OnceLock<Engine> = OnceLock::new();
 
 /// Get a 'static reference to the Rhai [`Engine`].
 pub fn get_engine() -> &'static Engine {
-    ENGINE.get_or_init(|| Engine::new())
-}
-/// Set up the Rhai [`Engine`] with extra setup.
-fn setup_engine(setup: impl FnOnce(&mut Engine)) -> &'static Engine {
-    ENGINE.get_or_init(|| {
-        let mut engine = Engine::new();
-        setup(&mut engine);
-        engine
-    })
+    ENGINE
+        .get()
+        .expect("`RhaiScript::new` must be called first")
 }
 
 static FILTERS_ENGINE: OnceLock<Engine> = OnceLock::new();
@@ -95,11 +91,6 @@ impl RhaiScript {
         scripts_path: impl Into<PathBuf>,
         setup: impl FnOnce(&mut Engine),
     ) -> Result<Self> {
-        assert!(
-            ENGINE.get().is_none(),
-            "`RhaiEngine::new_with_setup` can only be called once."
-        );
-
         let scripts_path = scripts_path.into();
 
         if !scripts_path.exists() {
@@ -109,17 +100,23 @@ impl RhaiScript {
             )));
         }
 
-        let _ = setup_engine(|engine| {
-            engine
-                .set_module_resolver(FileModuleResolver::new_with_path_and_extension(
-                    scripts_path.clone(),
-                    Self::SCRIPTS_EXT,
-                ))
-                .on_print(|message| info!(message))
-                .on_debug(|message, source, pos| debug!(?message, source, position = ?pos));
+        let mut engine = Engine::new();
 
-            setup(engine);
-        });
+        engine
+            .set_module_resolver(FileModuleResolver::new_with_path_and_extension(
+                scripts_path.clone(),
+                Self::SCRIPTS_EXT,
+            ))
+            .on_print(|message| info!(target: ROOT, message))
+            .on_debug(
+                |message, source, pos| debug!(target: ROOT, ?message, source, position = ?pos),
+            );
+
+        setup(&mut engine);
+
+        ENGINE
+            .set(engine)
+            .expect("`RhaiScript::new` can be called only once.");
 
         Ok(Self {
             scripts_path,
@@ -202,7 +199,7 @@ impl RhaiScript {
         let _ = span.enter();
 
         if !path.exists() {
-            debug!(file = script_file, ERR_MSG_SCRIPT_FILE_NOT_FOUND);
+            debug!(target: ROOT, file = script_file, ERR_MSG_SCRIPT_FILE_NOT_FOUND);
             return Err(EvalAltResult::ErrorSystem(
                 ERR_MSG_SCRIPT_FILE_NOT_FOUND.to_string(),
                 script_file.into(),
@@ -221,7 +218,7 @@ impl RhaiScript {
         };
 
         let source = ast.source();
-        debug!(fn_name, ?data, source, "Rhai: call function");
+        debug!(target: ROOT, fn_name, ?data, source, "Rhai: call function");
 
         let mut obj = to_dynamic(&*data).unwrap();
         let options = CallFnOptions::new().bind_this_ptr(&mut obj);
@@ -236,7 +233,7 @@ impl RhaiScript {
 
         *data = from_dynamic(&obj).unwrap();
 
-        debug!(?result, ?data, fn_name, source, "Rhai: function returns");
+        debug!(target: ROOT, ?result, ?data, fn_name, source, "Rhai: function returns");
 
         result
     }
@@ -270,8 +267,10 @@ impl RhaiScript {
         let engine = FILTERS_ENGINE.get_or_init(|| {
             let mut engine = Engine::new();
             engine
-                .on_print(|message| info!(message))
-                .on_debug(|message, source, pos| debug!(?message, source, position = ?pos));
+                .on_print(|message| info!(target: ROOT, message))
+                .on_debug(
+                    |message, source, pos| debug!(target: ROOT, ?message, source, position = ?pos),
+                );
 
             if let Some(i18n) = i18n {
                 let i18n = Arc::new(i18n);
@@ -301,7 +300,7 @@ impl RhaiScript {
                     }
                 });
 
-                info!("i18n function loaded into Rhai engine");
+                info!(target: ROOT, "i18n function loaded into Rhai engine");
             }
 
             engine
@@ -312,13 +311,13 @@ impl RhaiScript {
             let script = entry.path();
 
             if script.is_dir() {
-                debug!(dir = ?entry.file_name().to_string_lossy(), "skip dir");
+                debug!(target: ROOT, dir = ?entry.file_name().to_string_lossy(), "skip dir");
                 continue;
             } else if script
                 .extension()
                 .map_or(true, |ext| ext.to_string_lossy() != Self::SCRIPTS_EXT)
             {
-                debug!(file = ?entry.file_name().to_string_lossy(), "skip non-script file");
+                debug!(target: ROOT, file = ?entry.file_name().to_string_lossy(), "skip non-script file");
                 continue;
             }
 
@@ -327,7 +326,7 @@ impl RhaiScript {
             })?;
             ast.set_source(script.to_string_lossy().as_ref());
             let ast = Arc::new(ast);
-            debug!(file = ?entry.file_name().to_string_lossy(), "compile script");
+            debug!(target: ROOT, file = ?entry.file_name().to_string_lossy(), "compile script");
 
             ast.iter_functions()
                 .filter(|fn_def| fn_def.access != FnAccess::Private && fn_def.params.len() == 1)
@@ -338,7 +337,7 @@ impl RhaiScript {
                     let f = move |value: &Value,
                                   variables: &HashMap<String, Value>|
                           -> tera::Result<Value> {
-                        debug!(fn_name, ?value, ?variables, "Rhai: call Tera filter");
+                        trace!(target: ROOT, fn_name, ?value, ?variables, "Rhai: call Tera filter");
 
                         let mut obj = to_dynamic(value).unwrap();
                         let dict = to_dynamic(variables).unwrap().cast::<Map>();
@@ -350,28 +349,17 @@ impl RhaiScript {
 
                         let options = CallFnOptions::new().bind_this_ptr(&mut obj);
                         let value = engine
-                            .call_fn_with_options::<Dynamic>(
-                                options,
-                                scope,
-                                &ast,
-                                &fn_name,
-                                (dict,),
-                            )
+                            .call_fn_with_options::<Dynamic>(options, scope, &ast, &fn_name, (dict,))
                             .map_err(tera::Error::msg)?;
 
                         let value = from_dynamic(&value).unwrap();
-                        debug!(
-                            ?value,
-                            fn_name,
-                            ?variables,
-                            "Rhai: return value from Tera filter"
-                        );
+                        trace!(target: ROOT, ?value, fn_name, ?variables, "Rhai: return value from Tera filter");
 
                         Ok(value)
                     };
 
                     tera.tera.register_filter(fn_def.name, f);
-                    info!(fn_name = fn_def.name, "register Tera filter");
+                    info!(target: ROOT, fn_name = fn_def.name, file = ?entry.file_name().to_string_lossy(), "register Tera filter");
                 });
         }
 
@@ -399,18 +387,58 @@ where
     }
 }
 
-pub struct ScriptingEngineInitializer;
+pub const SCRIPTS_DIR: &'static str = "assets/scripts/tera/filters";
 
-pub const SCRIPTS_DIR: &'static str = "assets/scripts/";
+/// Loco initializer for the Rhai scripting engine with custom setup.
+pub struct ScriptingEngineInitializerWithSetup<F: Fn(&mut Engine) + Send + Sync + 'static> {
+    /// Directory containing scripts.
+    scripts_path: PathBuf,
+    /// Custom setup for the Rhai [`Engine`], if any.
+    setup: Option<F>,
+}
+/// Loco initializer for the Rhai scripting engine.
+pub type ScriptingEngineInitializer = ScriptingEngineInitializerWithSetup<fn(&mut Engine)>;
+
+impl<F: Fn(&mut Engine) + Send + Sync + 'static> ScriptingEngineInitializerWithSetup<F> {
+    /// Create a new [`ScriptingEngineInitializerWithSetup`] instance with custom setup for the Rhai [`Engine`].
+    #[inline(always)]
+    #[must_use]
+    pub fn new_with_setup(scripts_path: impl Into<PathBuf>, setup: F) -> Self {
+        Self {
+            scripts_path: scripts_path.into(),
+            setup: Some(setup),
+        }
+    }
+}
+
+impl ScriptingEngineInitializer {
+    /// Create a new [`ScriptingEngineInitializer`] instance.
+    #[inline(always)]
+    #[must_use]
+    pub fn new(scripts_path: impl Into<PathBuf>) -> Self {
+        Self {
+            scripts_path: scripts_path.into(),
+            setup: None,
+        }
+    }
+}
 
 #[async_trait]
-impl Initializer for ScriptingEngineInitializer {
+impl<F: Fn(&mut Engine) + Send + Sync + 'static> Initializer
+    for ScriptingEngineInitializerWithSetup<F>
+{
+    #[inline(always)]
+    #[must_use]
     fn name(&self) -> String {
         "scripting-engine".to_string()
     }
 
     async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<AxumRouter> {
-        let engine = RhaiScript::new(SCRIPTS_DIR)?;
+        let engine = if let Some(ref setup) = self.setup {
+            RhaiScript::new_with_setup(self.scripts_path.clone(), setup)?
+        } else {
+            RhaiScript::new(self.scripts_path.clone())?
+        };
         Ok(router.layer(Extension(ScriptingEngine::from(engine))))
     }
 }
