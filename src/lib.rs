@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 use axum::{
     async_trait, extract::FromRequestParts, http::request::Parts, Extension, Router as AxumRouter,
 };
@@ -15,6 +17,7 @@ use std::{
 use tracing::{debug, info, trace, trace_span};
 
 // Re-export useful Rhai types and functions.
+use rhai::module_resolvers::FileModuleResolver;
 pub use rhai::{
     eval, eval_file, format_map_as_json, run, run_file,
     serde::{from_dynamic, to_dynamic},
@@ -23,31 +26,39 @@ pub use rhai::{
     NativeCallContext, OptimizationLevel, ParseError, ParseErrorType, Position, Scope,
     ScriptFnMetadata, VarDefInfo, AST,
 };
-pub type RhaiResult<T> = std::result::Result<T, Box<EvalAltResult>>;
-use rhai::module_resolvers::FileModuleResolver;
 
+/// Type alias for `Result<T, Box<EvalAltResult>>`.
+pub type RhaiResult<T> = std::result::Result<T, Box<EvalAltResult>>;
+
+/// Target namespace path for logging.
+///
+/// Notice that this is changed to start with the `loco_rs` crate in order for script logs to be
+/// visible under Loco.
 pub const ROOT: &str = "loco_rs::scripting::rhai_script";
 
-/// Global Rhai [`Engine`] instance.
+/// Directory containing Rhai scripts.
+pub const SCRIPTS_DIR: &'static str = "assets/scripts";
+
+/// Directory containing Rhai scripts for Tera filters.
+pub const FILTER_SCRIPTS_DIR: &'static str = "assets/scripts/tera/filters";
+
+/// Global Rhai [`Engine`] instance for scripts evaluation.
 static ENGINE: OnceLock<Engine> = OnceLock::new();
 
-/// Get a 'static reference to the Rhai [`Engine`].
-pub fn get_engine() -> &'static Engine {
-    ENGINE
-        .get()
-        .expect("`RhaiScript::new` must be called first")
-}
-
+/// Global Rhai [`Engine`] instance for filter scripts evaluation.
 static FILTERS_ENGINE: OnceLock<Engine> = OnceLock::new();
 
-const ERR_MSG_SCRIPT_FILE_NOT_FOUND: &str = "script file not found";
+/// Error message for script file not found.
+const SCRIPT_FILE_NOT_FOUND: &str = "script file not found";
 
-/// Type that wraps a scripting engine.
+/// Type that wraps a scripting engine for use in [`Axum`][axum] handlers.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ScriptingEngine<E>(pub E);
 
 impl<E> ScriptingEngine<E> {
     /// Creates a new [`ScriptingEngine`] that wraps the given scripting engine
+    #[inline(always)]
+    #[must_use]
     pub fn new(engine: E) -> Self {
         Self(engine)
     }
@@ -56,6 +67,26 @@ impl<E> ScriptingEngine<E> {
 impl<E> From<E> for ScriptingEngine<E> {
     fn from(inner: E) -> Self {
         Self::new(inner)
+    }
+}
+
+#[async_trait]
+impl<S, E> FromRequestParts<S> for ScriptingEngine<E>
+where
+    S: Send + Sync,
+    E: Clone + Send + Sync + 'static,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        let Extension(tl): Extension<Self> = Extension::from_request_parts(parts, state)
+            .await
+            .expect("Scripting layer missing. Is it installed?");
+
+        Ok(tl)
     }
 }
 
@@ -74,6 +105,12 @@ impl RhaiScript {
 
     /// Create a new [`RhaiScript`] instance.
     ///
+    /// This method can only be called once. A Rhai [`Engine`] instance is created and shared globally.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called more than once.
+    ///
     /// # Errors
     ///
     /// Error if the scripts directory does not exist.
@@ -83,6 +120,12 @@ impl RhaiScript {
     }
 
     /// Create a new [`RhaiScript`] instance with custom setup.
+    ///
+    /// This method can only be called once. A Rhai [`Engine`] instance is created and shared globally.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called more than once.
     ///
     /// # Errors
     ///
@@ -116,7 +159,7 @@ impl RhaiScript {
 
         ENGINE
             .set(engine)
-            .expect("`RhaiScript::new` can be called only once.");
+            .expect("`RhaiScript::new` or `RhaiScript::new_with_setup` can be called only once.");
 
         Ok(Self {
             scripts_path,
@@ -124,11 +167,11 @@ impl RhaiScript {
         })
     }
 
-    /// Get a 'static reference to the Rhai [`Engine`].
+    /// Get a reference to the Rhai [`Engine`].
     #[inline(always)]
     #[must_use]
-    pub fn engine(&self) -> &'static Engine {
-        get_engine()
+    pub fn engine(&self) -> &Engine {
+        ENGINE.get().unwrap()
     }
 
     /// Convert a [Rhai error][EvalAltResult] to a [Loco error][Result].
@@ -167,7 +210,7 @@ impl RhaiScript {
         self.run_script(script_file, data, fn_name, args)
             .or_else(|err| match *err {
                 EvalAltResult::ErrorSystem(s, e)
-                    if s == ERR_MSG_SCRIPT_FILE_NOT_FOUND && e.to_string() == script_file =>
+                    if s == SCRIPT_FILE_NOT_FOUND && e.to_string() == script_file =>
                 {
                     Ok(Value::Null)
                 }
@@ -199,9 +242,9 @@ impl RhaiScript {
         let _ = span.enter();
 
         if !path.exists() {
-            debug!(target: ROOT, file = script_file, ERR_MSG_SCRIPT_FILE_NOT_FOUND);
+            debug!(target: ROOT, file = script_file, SCRIPT_FILE_NOT_FOUND);
             return Err(EvalAltResult::ErrorSystem(
-                ERR_MSG_SCRIPT_FILE_NOT_FOUND.to_string(),
+                SCRIPT_FILE_NOT_FOUND.to_string(),
                 script_file.into(),
             )
             .into());
@@ -367,28 +410,6 @@ impl RhaiScript {
     }
 }
 
-#[async_trait]
-impl<S, E> FromRequestParts<S> for ScriptingEngine<E>
-where
-    S: Send + Sync,
-    E: Clone + Send + Sync + 'static,
-{
-    type Rejection = std::convert::Infallible;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &S,
-    ) -> std::result::Result<Self, Self::Rejection> {
-        let Extension(tl): Extension<Self> = Extension::from_request_parts(parts, state)
-            .await
-            .expect("Scripting layer missing. Is it installed?");
-
-        Ok(tl)
-    }
-}
-
-pub const SCRIPTS_DIR: &'static str = "assets/scripts/tera/filters";
-
 /// Loco initializer for the Rhai scripting engine with custom setup.
 pub struct ScriptingEngineInitializerWithSetup<F: Fn(&mut Engine) + Send + Sync + 'static> {
     /// Directory containing scripts.
@@ -396,6 +417,7 @@ pub struct ScriptingEngineInitializerWithSetup<F: Fn(&mut Engine) + Send + Sync 
     /// Custom setup for the Rhai [`Engine`], if any.
     setup: Option<F>,
 }
+
 /// Loco initializer for the Rhai scripting engine.
 pub type ScriptingEngineInitializer = ScriptingEngineInitializerWithSetup<fn(&mut Engine)>;
 
