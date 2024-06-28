@@ -1,11 +1,11 @@
 #![doc = include_str!("../README.md")]
 
+use ::serde::{de::DeserializeOwned, Deserialize, Serialize};
 use axum::{
     async_trait, extract::FromRequestParts, http::request::Parts, Extension, Router as AxumRouter,
 };
 use loco_rs::app::{AppContext, Initializer};
 use loco_rs::prelude::*;
-use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -18,14 +18,9 @@ use tracing::{debug, info, trace, trace_span};
 
 // Re-export useful Rhai types and functions.
 use rhai::module_resolvers::FileModuleResolver;
-pub use rhai::{
-    eval, eval_file, format_map_as_json, run, run_file,
-    serde::{from_dynamic, to_dynamic},
-    Array, Blob, CallFnOptions, Dynamic, Engine, EvalAltResult, EvalContext, FnAccess, FnNamespace,
-    FnPtr, FuncArgs, FuncRegistration, ImmutableString, Instant, LexError, Map, Module,
-    NativeCallContext, OptimizationLevel, ParseError, ParseErrorType, Position, Scope,
-    ScriptFnMetadata, VarDefInfo, AST,
-};
+pub use rhai::serde::{from_dynamic, to_dynamic};
+pub use rhai::*;
+pub use tera;
 
 /// Type alias for `Result<T, Box<EvalAltResult>>`.
 pub type RhaiResult<T> = std::result::Result<T, Box<EvalAltResult>>;
@@ -145,11 +140,11 @@ impl RhaiScript {
 
         let mut engine = Engine::new();
 
+        let mut resolver = FileModuleResolver::new_with_path(SCRIPTS_DIR);
+        resolver.enable_cache(false);
+
         engine
-            .set_module_resolver(FileModuleResolver::new_with_path_and_extension(
-                scripts_path.clone(),
-                Self::SCRIPTS_EXT,
-            ))
+            .set_module_resolver(resolver)
             .on_print(|message| info!(target: ROOT, message))
             .on_debug(
                 |message, source, pos| debug!(target: ROOT, ?message, source, position = ?pos),
@@ -412,8 +407,6 @@ impl RhaiScript {
 
 /// Loco initializer for the Rhai scripting engine with custom setup.
 pub struct ScriptingEngineInitializerWithSetup<F: Fn(&mut Engine) + Send + Sync + 'static> {
-    /// Directory containing scripts.
-    scripts_path: PathBuf,
     /// Custom setup for the Rhai [`Engine`], if any.
     setup: Option<F>,
 }
@@ -421,15 +414,46 @@ pub struct ScriptingEngineInitializerWithSetup<F: Fn(&mut Engine) + Send + Sync 
 /// Loco initializer for the Rhai scripting engine.
 pub type ScriptingEngineInitializer = ScriptingEngineInitializerWithSetup<fn(&mut Engine)>;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScriptingEngineInitializerConfig {
+    /// Directory containing scripts.
+    #[serde(default = "ScriptingEngineInitializerConfig::default_scripts_path")]
+    pub scripts_path: PathBuf,
+    /// Directory containing Tera filters.
+    #[serde(default = "ScriptingEngineInitializerConfig::default_filters_path")]
+    pub filters_path: PathBuf,
+}
+
+impl Default for ScriptingEngineInitializerConfig {
+    #[inline(always)]
+    fn default() -> Self {
+        Self {
+            scripts_path: Self::default_scripts_path(),
+            filters_path: Self::default_filters_path(),
+        }
+    }
+}
+
+impl ScriptingEngineInitializerConfig {
+    /// Default directory containing scripts.
+    pub fn default_scripts_path() -> PathBuf {
+        SCRIPTS_DIR.into()
+    }
+    /// Default directory containing Tera filters.
+    pub fn default_filters_path() -> PathBuf {
+        FILTER_SCRIPTS_DIR.into()
+    }
+}
+
 impl<F: Fn(&mut Engine) + Send + Sync + 'static> ScriptingEngineInitializerWithSetup<F> {
+    /// Initializer name.
+    pub const NAME: &'static str = "scripting";
+
     /// Create a new [`ScriptingEngineInitializerWithSetup`] instance with custom setup for the Rhai [`Engine`].
     #[inline(always)]
     #[must_use]
-    pub fn new_with_setup(scripts_path: impl Into<PathBuf>, setup: F) -> Self {
-        Self {
-            scripts_path: scripts_path.into(),
-            setup: Some(setup),
-        }
+    pub fn new_with_setup(setup: F) -> Self {
+        Self { setup: Some(setup) }
     }
 }
 
@@ -437,11 +461,8 @@ impl ScriptingEngineInitializer {
     /// Create a new [`ScriptingEngineInitializer`] instance.
     #[inline(always)]
     #[must_use]
-    pub fn new(scripts_path: impl Into<PathBuf>) -> Self {
-        Self {
-            scripts_path: scripts_path.into(),
-            setup: None,
-        }
+    pub fn new() -> Self {
+        Self { setup: None }
     }
 }
 
@@ -452,15 +473,26 @@ impl<F: Fn(&mut Engine) + Send + Sync + 'static> Initializer
     #[inline(always)]
     #[must_use]
     fn name(&self) -> String {
-        "scripting-engine".to_string()
+        Self::NAME.to_string()
     }
 
-    async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<AxumRouter> {
+    async fn after_routes(&self, router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
+        let config = ctx
+            .config
+            .initializers
+            .as_ref()
+            .and_then(|m| m.get(Self::NAME))
+            .cloned()
+            .unwrap_or_default();
+
+        let config: ScriptingEngineInitializerConfig = serde_json::from_value(config)?;
+
         let engine = if let Some(ref setup) = self.setup {
-            RhaiScript::new_with_setup(self.scripts_path.clone(), setup)?
+            RhaiScript::new_with_setup(config.scripts_path.clone(), setup)?
         } else {
-            RhaiScript::new(self.scripts_path.clone())?
+            RhaiScript::new(config.scripts_path.clone())?
         };
+
         Ok(router.layer(Extension(ScriptingEngine::from(engine))))
     }
 }
