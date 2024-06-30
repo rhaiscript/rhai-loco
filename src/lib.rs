@@ -288,6 +288,7 @@ impl RhaiScript {
     pub fn register_tera_filters(
         tera: &mut TeraView,
         scripts_path: impl AsRef<Path>,
+        engine_setup: impl FnOnce(&mut Engine),
         i18n: Option<impl tera::Function + 'static>,
     ) -> Result<()> {
         let path = scripts_path.as_ref();
@@ -304,6 +305,9 @@ impl RhaiScript {
 
         let engine = FILTERS_ENGINE.get_or_init(|| {
             let mut engine = Engine::new();
+
+            engine_setup(&mut engine);
+
             engine
                 .on_print(|message| info!(target: ROOT, message))
                 .on_debug(
@@ -363,14 +367,14 @@ impl RhaiScript {
                 Error::string(&(format!("`{}`: {err}", entry.file_name().to_string_lossy())))
             })?;
             ast.set_source(script.to_string_lossy().as_ref());
-            let ast = Arc::new(ast);
+            let shared_ast = Arc::new(ast);
             debug!(target: ROOT, file = ?entry.file_name().to_string_lossy(), "compile script");
 
-            ast.iter_functions()
+            shared_ast.iter_functions()
                 .filter(|fn_def| fn_def.access != FnAccess::Private && fn_def.params.len() == 1)
                 .for_each(|fn_def| {
                     let fn_name = fn_def.name.to_string();
-                    let ast = ast.clone();
+                    let ast = shared_ast.clone();
 
                     let f = move |value: &Value,
                                   variables: &HashMap<String, Value>|
