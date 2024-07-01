@@ -22,6 +22,23 @@ rhai-loco = "0.2.0"
 ```
 
 
+Configuration
+-------------
+
+The Loco `config` section of `initializers` can be used to set options for the Rhai engine.
+
+```yaml
+# Initializers configuration
+initializers:
+  # Scripting engine configuration
+  scripting:
+    # Directory holding scripts
+    scripts_path: assets/scripts
+    # Directory holding Tera filter scripts
+    filters_path: assets/scripts/tera/filters
+```
+
+
 Enable Scripted Tera Filters
 ----------------------------
 
@@ -33,27 +50,25 @@ Modify the `ViewEngineInitializer` under `src/initializers/view_engine.rs`:
 └─────────────────────────────────┘
 
 // Within this method...
-async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<AxumRouter> {
+async fn after_routes(&self, router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
     let mut tera_engine = engines::TeraView::build()?;
 
-    if Path::new(I18N_DIR).exists() {
-        debug!("locales dir = {I18N_DIR}");
-        let arc = ArcLoader::builder(I18N_DIR, unic_langid::langid!("de-DE"))
-            .shared_resources(Some(&[I18N_SHARED.into()]))
-            .customize(|bundle| bundle.set_use_isolating(false))
-            .build()
-            .map_err(|e| Error::string(&e.to_string()))?;
-        tera_engine
-            .tera
-            .register_function("t", FluentLoader::new(arc));
-        info!("locales loaded");
-    }
+            :
+            :
 
     ///////////////////////////////////////////////////////////////////////////////////
     // Add the following to enable scripted Tera filters
-    let path = Path::new("assets/scripts/tera/filters");
-    if path.is_dir() {
-        // This code is duplicated from above to expose the i18n `t` function to Rhai scripts
+
+    // Get scripting engine configuration object
+    let config = ctx.config.initializers.as_ref()
+        .and_then(|m| m.get(rhai_loco::ScriptingEngineInitializer::NAME))
+        .cloned().unwrap_or_default();
+
+    let config: rhai_loco::ScriptingEngineInitializerConfig = serde_json::from_value(config)?;
+
+    if config.filters_path.is_dir() {
+        // This code is duplicated from the original code
+        // to expose the i18n `t` function to Rhai scripts
         let i18n = if Path::new(I18N_DIR).is_dir() {
             let arc = ArcLoader::builder(I18N_DIR, unic_langid::langid!("de-DE"))
                 .shared_resources(Some(&[I18N_SHARED.into()]))
@@ -64,8 +79,15 @@ async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<Ax
         } else {
             None
         };
-        rhai_loco::RhaiScript::register_tera_filters(&mut tera_engine, path, i18n)?;
+        rhai_loco::RhaiScript::register_tera_filters(
+            &mut tera_engine,
+            config.filters_path,
+            |_engine| {},   // custom configuration of the Rhai Engine, if any
+            i18n,
+        )?;
+        info!("Filter scripts loaded");
     }
+
     // End addition
     ///////////////////////////////////////////////////////////////////////////////////
 
@@ -250,7 +272,7 @@ The scripting engine is first injected into Loco via the `ScriptingEngineInitial
 async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
     Ok(vec![
         // Add the scripting engine initializer
-        Box::new(rhai_loco::ScriptingEngineInitializer::new(rhai_loco::SCRIPT_DIR)),
+        Box::new(rhai_loco::ScriptingEngineInitializer),
         Box::new(initializers::view_engine::ViewEngineInitializer),
     ])
 }
@@ -335,8 +357,7 @@ support, it is easy to perform custom setup on the Rhai engine via `ScriptingEng
 async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
     Ok(vec![
         // Add the scripting engine initializer
-        Box::new(rhai_loco::ScriptingEngineInitializerWithSetup::new_with_setup(
-            rhai_loco::SCRIPT_DIR, |engine| {
+        Box::new(rhai_loco::ScriptingEngineInitializerWithSetup::new_with_setup(|engine| {
                         :
             // ... do custom setup of Rhai engine here ...
                         :

@@ -410,6 +410,7 @@ impl RhaiScript {
 }
 
 /// Loco initializer for the Rhai scripting engine with custom setup.
+#[derive(Default)]
 pub struct ScriptingEngineInitializerWithSetup<F: Fn(&mut Engine) + Send + Sync + 'static> {
     /// Custom setup for the Rhai [`Engine`], if any.
     setup: Option<F>,
@@ -458,15 +459,6 @@ impl<F: Fn(&mut Engine) + Send + Sync + 'static> ScriptingEngineInitializerWithS
     #[must_use]
     pub fn new_with_setup(setup: F) -> Self {
         Self { setup: Some(setup) }
-    }
-}
-
-impl ScriptingEngineInitializer {
-    /// Create a new [`ScriptingEngineInitializer`] instance.
-    #[inline(always)]
-    #[must_use]
-    pub fn new() -> Self {
-        Self { setup: None }
     }
 }
 
