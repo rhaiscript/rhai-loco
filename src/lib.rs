@@ -256,7 +256,7 @@ impl RhaiScript {
         };
 
         let source = ast.source();
-        debug!(target: ROOT, fn_name, ?data, source, "Rhai: call function");
+        debug!(fn_name, ?data, source, "Rhai: call function");
 
         let mut obj = to_dynamic(&*data).unwrap();
         let options = CallFnOptions::new().bind_this_ptr(&mut obj);
@@ -264,6 +264,7 @@ impl RhaiScript {
         let result = self
             .engine()
             .call_fn_with_options(options, &mut Scope::new(), ast, fn_name, args)
+            .map(|v| from_dynamic(&v).unwrap())
             .map_err(|err| match *err {
                 EvalAltResult::ErrorInFunctionCall(f, _, e, Position::NONE) if f == fn_name => e,
                 _ => err,
@@ -271,7 +272,7 @@ impl RhaiScript {
 
         *data = from_dynamic(&obj).unwrap();
 
-        debug!(target: ROOT, ?result, ?data, fn_name, source, "Rhai: function returns");
+        debug!(?result, ?data, fn_name, source, "Rhai: function returns");
 
         result
     }
