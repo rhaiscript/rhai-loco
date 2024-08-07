@@ -227,17 +227,16 @@ impl RhaiScript {
         fn_name: &str,
         args: impl FuncArgs,
     ) -> RhaiResult<Value> {
-        let mut path = self.scripts_path.join(script_file);
+        let mut script_path = self.scripts_path.join(script_file);
 
-        if path.extension().is_none() {
-            path.set_extension(Self::SCRIPTS_EXT);
+        if script_path.extension().is_none() {
+            script_path.set_extension(Self::SCRIPTS_EXT);
         }
 
-        let span = trace_span!("run_script");
-        let _ = span.enter();
+        let _ = trace_span!("run_script").enter();
 
-        if !path.exists() {
-            debug!(target: ROOT, file = script_file, SCRIPT_FILE_NOT_FOUND);
+        if !script_path.exists() {
+            debug!(target: ROOT, script = script_path.to_string_lossy().as_ref(), message = SCRIPT_FILE_NOT_FOUND);
             return Err(EvalAltResult::ErrorSystem(
                 SCRIPT_FILE_NOT_FOUND.to_string(),
                 script_file.into(),
@@ -247,12 +246,14 @@ impl RhaiScript {
 
         let mut cache = self.cache.write().unwrap();
 
-        let ast = if let Some(ast) = cache.get(&path) {
+        let ast = if let Some(ast) = cache.get(&script_path) {
             ast
         } else {
-            let mut ast = self.engine().compile_file(path.clone())?;
-            ast.set_source(path.to_string_lossy().as_ref());
-            cache.entry(path).or_insert_with(|| Arc::new(ast.clone()))
+            let mut ast = self.engine().compile_file(script_path.clone())?;
+            ast.set_source(script_path.to_string_lossy().as_ref());
+            cache
+                .entry(script_path)
+                .or_insert_with(|| Arc::new(ast.clone()))
         };
 
         let source = ast.source();

@@ -11,6 +11,22 @@ Rhai Engine Integration for Loco
 This crate adds [Rhai](https://rhai.rs) script support to [Loco](https://loco.rs).
 
 
+Why Include a Scripting Engine
+------------------------------
+
+Although a system based upon [Loco](https://loco.rs) is usually compiled for maximum performance, there are times where user requirements are dynamic and need to be adapted to, preferably without recompilation.
+
+Scripts are tremendously useful in the following cases:
+
+* Complex custom configuration or custom business logic per installation at different sites without recompilation. In a different programming language, DLL's or dynamically-linked libraries may be used.
+
+* Rapidly adapt to changing environments (e.g. handle new data formats, input changes, or novel user errors etc.) without hard-coding the rules (which may soon change again).
+
+* Trial testing new features or business logic with fast iteration (without recompilation). The final version, once stable, can be converted into native Rust code for performance.
+
+* Develop [Tera](https://crates.io/crates/tera) filters in script so they can be iterated quickly. Useful ones can then be converted into Rust native filters. This can normally be achieved via [Tera](https://crates.io/crates/tera) macros, but the Rhai scripting language is more powerful and expressive than [Tera](https://crates.io/crates/tera) expressions, allowing more complex logic to be implemented.
+
+
 Usage
 -----
 
@@ -18,7 +34,7 @@ Import `rhai-loco` inside `Cargo.toml`:
 
 ```toml
 [dependencies]
-rhai-loco = "0.2.0"
+rhai-loco = "0.3.0"
 ```
 
 
