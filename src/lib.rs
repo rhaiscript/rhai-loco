@@ -38,10 +38,13 @@ pub const SCRIPTS_DIR: &'static str = "assets/scripts";
 pub const FILTER_SCRIPTS_DIR: &'static str = "assets/scripts/tera/filters";
 
 /// Global Rhai [`Engine`] instance for scripts evaluation.
-static ENGINE: OnceLock<Engine> = OnceLock::new();
+pub static ENGINE: OnceLock<Engine> = OnceLock::new();
 
 /// Global Rhai [`Engine`] instance for filter scripts evaluation.
-static FILTERS_ENGINE: OnceLock<Engine> = OnceLock::new();
+pub static FILTERS_ENGINE: OnceLock<Engine> = OnceLock::new();
+
+/// Global `RhaiScript` instance for scripts evaluation.
+pub static RHAI_SCRIPT: OnceLock<RhaiScript> = OnceLock::new();
 
 /// Error message for script file not found.
 const SCRIPT_FILE_NOT_FOUND: &str = "script file not found";
@@ -89,7 +92,7 @@ where
 #[derive(Debug, Clone)]
 pub struct RhaiScript {
     /// Path to the directory containing Rhai scripts.
-    scripts_path: PathBuf,
+    scripts_path: Arc<PathBuf>,
     /// Cache of compiled Rhai scripts in [`AST`] form.
     cache: Arc<RwLock<HashMap<PathBuf, Arc<AST>>>>,
 }
@@ -97,6 +100,18 @@ pub struct RhaiScript {
 impl RhaiScript {
     /// File extension for Rhai scripts.
     pub const SCRIPTS_EXT: &'static str = "rhai";
+
+    /// Get a new [`RhaiScript`] instance.
+    ///
+    /// The methods [`new`][`RhaiScript::new`] or [`new_with_setup`][`RhaiScript::new_with_setup`] must be called first.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called before [`new`][`RhaiScript::new`] or [`new_with_setup`][`RhaiScript::new_with_setup`].
+    #[inline(always)]
+    pub fn get_instance() -> Self {
+        RHAI_SCRIPT.get().unwrap().clone()
+    }
 
     /// Create a new [`RhaiScript`] instance.
     ///
@@ -156,10 +171,14 @@ impl RhaiScript {
             .set(engine)
             .expect("`RhaiScript::new` or `RhaiScript::new_with_setup` can be called only once.");
 
-        Ok(Self {
-            scripts_path,
-            cache: Arc::new(RwLock::new(HashMap::new())),
-        })
+        RHAI_SCRIPT
+            .set(Self {
+                scripts_path: Arc::new(scripts_path),
+                cache: Arc::new(RwLock::new(HashMap::new())),
+            })
+            .unwrap();
+
+        Ok(Self::get_instance())
     }
 
     /// Get a reference to the Rhai [`Engine`].
@@ -450,6 +469,18 @@ impl ScriptingEngineInitializerConfig {
     pub fn default_filters_path() -> PathBuf {
         FILTER_SCRIPTS_DIR.into()
     }
+    /// Create a new [`ScriptingEngineInitializerConfig`] instance from the Loco [`AppContext`].
+    pub fn from_app_context(ctx: &AppContext) -> Result<Self> {
+        let config = ctx
+            .config
+            .initializers
+            .as_ref()
+            .and_then(|m| m.get(ScriptingEngineInitializer::NAME))
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(serde_json::from_value(config)?)
+    }
 }
 
 impl<F: Fn(&mut Engine) + Send + Sync + 'static> ScriptingEngineInitializerWithSetup<F> {
@@ -475,15 +506,7 @@ impl<F: Fn(&mut Engine) + Send + Sync + 'static> Initializer
     }
 
     async fn after_routes(&self, router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
-        let config = ctx
-            .config
-            .initializers
-            .as_ref()
-            .and_then(|m| m.get(Self::NAME))
-            .cloned()
-            .unwrap_or_default();
-
-        let config: ScriptingEngineInitializerConfig = serde_json::from_value(config)?;
+        let config = ScriptingEngineInitializerConfig::from_app_context(ctx)?;
 
         let engine = if let Some(ref setup) = self.setup {
             RhaiScript::new_with_setup(config.scripts_path.clone(), setup)?

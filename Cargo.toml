@@ -1,6 +1,6 @@
 [package]
 name = "rhai-loco"
-version = "0.7.0"
+version = "0.7.1"
 rust-version = "1.66.0"
 edition = "2021"
 authors = ["Stephen Chung"]
