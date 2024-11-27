@@ -1,6 +1,6 @@
 [package]
 name = "rhai-loco"
-version = "0.12.1"
+version = "0.13.0"
 rust-version = "1.66.0"
 edition = "2021"
 authors = ["Stephen Chung"]
@@ -12,7 +12,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 rhai = { path = "../rhai", version = "1.20", features = ["only_i64", "decimal", "sync", "serde"] }
-loco-rs = { version = "0.12.0" }
+loco-rs = { version = "0.13.0" }
 axum = { version = "0.7.1" }
 tera = { version = "1" }
 tracing = { version = "0.1.40" }

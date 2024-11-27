@@ -421,7 +421,14 @@ impl RhaiScript {
                         Ok(value)
                     };
 
-                    tera.tera.register_filter(fn_def.name, f);
+                    #[cfg(debug_assertions)]
+                    let engine = &mut *tera.tera.lock().expect("lock");
+                       
+                    #[cfg(not(debug_assertions))]
+                    let engine = &mut tera.tera;
+
+                    engine.register_filter(fn_def.name, f);
+
                     info!(target: ROOT, fn_name = fn_def.name, file = ?entry.file_name().to_string_lossy(), "register Tera filter");
                 });
         }
