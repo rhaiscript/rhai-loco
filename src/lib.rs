@@ -1,9 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 use ::serde::{de::DeserializeOwned, Deserialize, Serialize};
-use axum::{
-    async_trait, extract::FromRequestParts, http::request::Parts, Extension, Router as AxumRouter,
-};
+use axum::{extract::FromRequestParts, http::request::Parts, Extension, Router as AxumRouter};
 use loco_rs::app::{AppContext, Initializer};
 use loco_rs::prelude::*;
 use serde_json::Value;
@@ -68,7 +66,6 @@ impl<E> From<E> for ScriptingEngine<E> {
     }
 }
 
-#[async_trait]
 impl<S, E> FromRequestParts<S> for ScriptingEngine<E>
 where
     S: Send + Sync,
@@ -423,7 +420,7 @@ impl RhaiScript {
 
                     #[cfg(debug_assertions)]
                     let engine = &mut *tera.tera.lock().expect("lock");
-                       
+
                     #[cfg(not(debug_assertions))]
                     let engine = &mut tera.tera;
 
