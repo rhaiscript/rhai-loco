@@ -504,7 +504,6 @@ impl<F: Fn(&mut Engine) + Send + Sync + 'static> Initializer
     for ScriptingEngineInitializerWithSetup<F>
 {
     #[inline(always)]
-    #[must_use]
     fn name(&self) -> String {
         Self::NAME.to_string()
     }
