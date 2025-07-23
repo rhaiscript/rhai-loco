@@ -65,47 +65,63 @@ Modify the `ViewEngineInitializer` under `src/initializers/view_engine.rs`:
 │ src/initializers/view_engine.rs │
 └─────────────────────────────────┘
 
+///////////////////////////////////////////////////////////////////////////////////
 // Within this method...
-async fn after_routes(&self, router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
-    let mut tera_engine = engines::TeraView::build()?;
-
-            :
-            :
-
-    ///////////////////////////////////////////////////////////////////////////////////
-    // Add the following to enable scripted Tera filters
-
-    // Get scripting engine configuration object
-    let config = ctx.config.initializers.as_ref()
+// Modify as follows to enable scripted Tera filters.
+async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<AxumRouter> {
+    /////////////////////////////////////////////////////////////////
+    // Add code to get scripting engine configuration
+    let config = _ctx.config.initializers.as_ref()
         .and_then(|m| m.get(rhai_loco::ScriptingEngineInitializer::NAME))
-        .cloned().unwrap_or_default();
+        .cloned()
+        .unwrap_or_default();
 
     let config: rhai_loco::ScriptingEngineInitializerConfig = serde_json::from_value(config)?;
+    let filters_path = config.filters_path.is_dir().then_some(config.filters_path);
+    // End modification
+    /////////////////////////////////////////////////////////////////
 
-    if config.filters_path.is_dir() {
-        // This code is duplicated from the original code
-        // to expose the i18n `t` function to Rhai scripts
-        let i18n = if Path::new(I18N_DIR).is_dir() {
-            let arc = ArcLoader::builder(I18N_DIR, unic_langid::langid!("de-DE"))
+    let tera_engine = if std::path::Path::new(I18N_DIR).exists() {
+        let arc = std::sync::Arc::new(
+            ArcLoader::builder(&I18N_DIR, unic_langid::langid!("en-US"))
                 .shared_resources(Some(&[I18N_SHARED.into()]))
                 .customize(|bundle| bundle.set_use_isolating(false))
                 .build()
-                .map_err(|e| Error::string(&e.to_string()))?;
-            Some(FluentLoader::new(arc))
-        } else {
-            None
-        };
-        rhai_loco::RhaiScript::register_tera_filters(
-            &mut tera_engine,
-            config.filters_path,
-            |_engine| {},   // custom configuration of the Rhai Engine, if any
-            i18n,
-        )?;
-        info!("Filter scripts loaded");
-    }
+                .map_err(|e| Error::string(&e.to_string()))?,
+        );
+        info!("locales loaded");
 
-    // End addition
-    ///////////////////////////////////////////////////////////////////////////////////
+        engines::TeraView::build()?.post_process(move |tera| {
+            ///////////////////////////////////////////////////////////////
+            // Add Rhai scripted filters registration when not using i18n
+            if let Some(ref path) = filters_path {
+                rhai_loco::RhaiScript::register_tera_filters(tera, &path,
+                    |_engine| {},   // custom configuration of the Rhai Engine, if any
+                    FluentLoader::new(arc.clone()),
+                )?;
+                info!("Filter scripts loaded");
+            }
+            // End modification
+            ///////////////////////////////////////////////////////////////
+            tera.register_function("t", FluentLoader::new(arc.clone()));
+            Ok(())
+        })?
+    /////////////////////////////////////////////////
+    // Add Rhai scripted filters registration
+    } else if let Some(path) = filters_path {
+        engines::TeraView::build()?.post_process(move |tera| {
+            rhai_loco::RhaiScript::register_tera_filters(tera, &path,
+                |_engine| {},   // custom configuration of the Rhai Engine, if any
+                FluentLoader::new(arc.clone()),
+            )?;
+            info!("Filter scripts loaded");
+            Ok(())
+        })?
+    // End modification
+    /////////////////////////////////////////////////
+    } else {
+        engines::TeraView::build()?
+    };
 
     Ok(router.layer(Extension(ViewEngine::from(tera_engine))))
 }

@@ -294,7 +294,7 @@ impl RhaiScript {
         result
     }
 
-    /// Register Tera filters from Rhai scripts.
+    /// Register Tera filters from Rhai scripts on a raw [`Tera`](tera::Tera) instance.
     ///
     /// If the Tera i18n function `t` is provided, it is also registered into the Rhai [`Engine`]
     /// for use in filter scripts.
@@ -304,7 +304,7 @@ impl RhaiScript {
     /// * Error if the filter scripts directory does not exist.
     /// * Error if there is a syntax error in any script during compilation.
     pub fn register_tera_filters(
-        tera: &mut TeraView,
+        tera: &mut tera::Tera,
         scripts_path: impl AsRef<Path>,
         engine_setup: impl FnOnce(&mut Engine),
         i18n: Option<impl tera::Function + 'static>,
@@ -418,13 +418,7 @@ impl RhaiScript {
                         Ok(value)
                     };
 
-                    #[cfg(debug_assertions)]
-                    let engine = &mut *tera.tera.lock().expect("lock");
-
-                    #[cfg(not(debug_assertions))]
-                    let engine = &mut tera.tera;
-
-                    engine.register_filter(fn_def.name, f);
+                    tera.register_filter(fn_def.name, f);
 
                     info!(target: ROOT, fn_name = fn_def.name, file = ?entry.file_name().to_string_lossy(), "register Tera filter");
                 });
@@ -510,7 +504,6 @@ impl<F: Fn(&mut Engine) + Send + Sync + 'static> Initializer
 
     async fn after_routes(&self, router: AxumRouter, ctx: &AppContext) -> Result<AxumRouter> {
         let config = ScriptingEngineInitializerConfig::from_app_context(ctx)?;
-
         let engine = if let Some(ref setup) = self.setup {
             RhaiScript::new_with_setup(config.scripts_path.clone(), setup)?
         } else {
