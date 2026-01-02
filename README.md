@@ -71,12 +71,7 @@ Modify the `ViewEngineInitializer` under `src/initializers/view_engine.rs`:
 async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<AxumRouter> {
     /////////////////////////////////////////////////////////////////
     // Add code to get scripting engine configuration
-    let config = _ctx.config.initializers.as_ref()
-        .and_then(|m| m.get(rhai_loco::ScriptingEngineInitializer::NAME))
-        .cloned()
-        .unwrap_or_default();
-
-    let config: rhai_loco::ScriptingEngineInitializerConfig = serde_json::from_value(config)?;
+    let config = ScriptingEngineInitializerConfig::from_app_context(_ctx)?;
     let filters_path = config.filters_path.is_dir().then_some(config.filters_path);
     // End modification
     /////////////////////////////////////////////////////////////////
@@ -93,7 +88,7 @@ async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<Ax
 
         engines::TeraView::build()?.post_process(move |tera| {
             ///////////////////////////////////////////////////////////////
-            // Add Rhai scripted filters registration when not using i18n
+            // Add Rhai scripted filters registration (with i18n)
             if let Some(ref path) = filters_path {
                 rhai_loco::RhaiScript::register_tera_filters(tera, &path,
                     |_engine| {},   // custom configuration of the Rhai Engine, if any
@@ -107,7 +102,7 @@ async fn after_routes(&self, router: AxumRouter, _ctx: &AppContext) -> Result<Ax
             Ok(())
         })?
     /////////////////////////////////////////////////
-    // Add Rhai scripted filters registration
+    // Add Rhai scripted filters registration (no i18n)
     } else if let Some(path) = filters_path {
         engines::TeraView::build()?.post_process(move |tera| {
             rhai_loco::RhaiScript::register_tera_filters(tera, &path,
