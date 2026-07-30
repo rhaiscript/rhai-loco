@@ -34,7 +34,7 @@ Import `rhai-loco` inside `Cargo.toml`:
 
 ```toml
 [dependencies]
-rhai-loco = "0.15.0"
+rhai-loco = "1.0.0"
 ```
 
 
