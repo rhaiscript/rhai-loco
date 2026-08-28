@@ -18,7 +18,10 @@ use tracing::{debug, info, trace, trace_span};
 use rhai::module_resolvers::FileModuleResolver;
 pub use rhai::serde::{from_dynamic, to_dynamic};
 pub use rhai::*;
-pub use tera;
+pub use tera::{
+    self, Context as TeraContext, Error as TeraError, Function, Kwargs, Map as TeraMap,
+    State as TeraState, Tera, TeraResult, Value as TeraValue,
+};
 
 /// Type alias for `Result<T, Box<EvalAltResult>>`.
 pub type RhaiResult<T> = std::result::Result<T, Box<EvalAltResult>>;
@@ -294,7 +297,7 @@ impl RhaiScript {
         result
     }
 
-    /// Register Tera filters from Rhai scripts on a raw [`Tera`](tera::Tera) instance.
+    /// Register Tera filters from Rhai scripts on a raw [`Tera`] instance.
     ///
     /// If the Tera i18n function `t` is provided, it is also registered into the Rhai [`Engine`]
     /// for use in filter scripts.
@@ -304,10 +307,10 @@ impl RhaiScript {
     /// * Error if the filter scripts directory does not exist.
     /// * Error if there is a syntax error in any script during compilation.
     pub fn register_tera_filters(
-        tera: &mut tera::Tera,
+        tera: &mut Tera,
         scripts_path: impl AsRef<Path>,
         engine_setup: impl FnOnce(&mut Engine),
-        i18n: Option<impl tera::Function + 'static>,
+        i18n: Option<impl Function<TeraResult<TeraValue>> + 'static>,
     ) -> Result<()> {
         let path = scripts_path.as_ref();
 
@@ -343,7 +346,10 @@ impl RhaiScript {
                             Ok((k.to_string(), from_dynamic(&v)?))
                         })
                         .collect::<RhaiResult<_>>()?;
-                    match t.call(&map) {
+
+                    let kwargs = map_to_kwargs(&map);
+
+                    match t.call(kwargs, &tera::State::new(&tera::Context::new())) {
                         Ok(v) => Ok(to_dynamic(v)?),
                         Err(e) => Err(e.to_string().into()),
                     }
@@ -352,9 +358,13 @@ impl RhaiScript {
                 let t = i18n.clone();
                 engine.register_fn("t", move |key: &str, lang: &str| -> RhaiResult<Dynamic> {
                     let mut map = HashMap::new();
-                    let _ = map.insert("key".to_string(), key.into());
-                    let _ = map.insert("lang".to_string(), lang.into());
-                    match t.call(&map) {
+
+                    map.insert("key".to_string(), key.into());
+                    map.insert("lang".to_string(), lang.into());
+
+                    let kwargs = map_to_kwargs(&map);
+
+                    match t.call(kwargs, &TeraState::new(&TeraContext::new())) {
                         Ok(v) => Ok(to_dynamic(v)?),
                         Err(e) => Err(e.to_string().into()),
                     }
@@ -394,13 +404,16 @@ impl RhaiScript {
                     let fn_name = fn_def.name.to_string();
                     let ast = shared_ast.clone();
 
-                    let f = move |value: &Value,
-                                  variables: &HashMap<String, Value>|
-                          -> tera::Result<Value> {
-                        trace!(target: ROOT, fn_name, ?value, ?variables, "Rhai: call Tera filter");
+                    let f = move |value: &TeraValue,
+                                  kwargs: Kwargs,
+                                  _state: &TeraState|
+                          -> TeraResult<TeraValue> {
+                        let vars = kwargs_to_map(&kwargs);
 
-                        let mut obj = to_dynamic(value).unwrap();
-                        let dict = to_dynamic(variables).unwrap().cast::<Map>();
+                        trace!(target: ROOT, fn_name, ?value, ?vars, "Rhai: call Tera filter");
+
+                        let mut obj = to_dynamic(&serde_json::to_value(value).map_err(TeraError::message)?).unwrap();
+                        let dict = to_dynamic(&vars).unwrap().cast::<Map>();
 
                         let scope = &mut Scope::new();
                         dict.iter().for_each(|(k, v)| {
@@ -408,17 +421,19 @@ impl RhaiScript {
                         });
 
                         let options = CallFnOptions::new().bind_this_ptr(&mut obj);
-                        let value = engine
+
+                        let result = engine
                             .call_fn_with_options::<Dynamic>(options, scope, &ast, &fn_name, (dict,))
-                            .map_err(tera::Error::msg)?;
+                            .map_err(TeraError::message)?;
 
-                        let value = from_dynamic(&value).unwrap();
-                        trace!(target: ROOT, ?value, fn_name, ?variables, "Rhai: return value from Tera filter");
+                        let result = tera_from_json(from_dynamic(&result).unwrap())?;
 
-                        Ok(value)
+                        trace!(target: ROOT, ?result, fn_name, ?vars, "Rhai: return value from Tera filter");
+
+                        Ok(result)
                     };
 
-                    tera.register_filter(fn_def.name, f);
+                    tera.register_filter(fn_def.name.to_string(), f);
 
                     info!(target: ROOT, fn_name = fn_def.name, file = ?entry.file_name().to_string_lossy(), "register Tera filter");
                 });
@@ -426,6 +441,58 @@ impl RhaiScript {
 
         Ok(())
     }
+}
+
+/// Convert a plain `HashMap<String, serde_json::Value>` into Tera v2 [`Kwargs`].
+pub fn map_to_kwargs(map: &HashMap<String, Value>) -> Kwargs {
+    let tera_map: TeraMap = map
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.clone().into(),
+                tera_from_json(v.clone()).unwrap_or_else(|_| ().into()),
+            )
+        })
+        .collect();
+    Kwargs::new(tera_map.into())
+}
+
+/// Convert `serde_json::Value` into Tera v2 [`Value`](TeraValue).
+pub fn tera_from_json(value: Value) -> TeraResult<TeraValue> {
+    Ok(match value {
+        Value::Null => ().into(),
+        Value::Bool(v) => v.into(),
+        Value::Number(v) => v
+            .as_i64()
+            .map(Into::into)
+            .or_else(|| v.as_u64().map(Into::into))
+            .or_else(|| v.as_f64().map(Into::into))
+            .ok_or_else(|| TeraError::message("invalid number"))?,
+        Value::String(v) => v.into(),
+        Value::Array(v) => v
+            .into_iter()
+            .map(tera_from_json)
+            .collect::<TeraResult<Vec<_>>>()?
+            .into(),
+        Value::Object(v) => v
+            .into_iter()
+            .map(|(k, v)| Ok((k.into(), tera_from_json(v)?)))
+            .collect::<TeraResult<TeraMap>>()?
+            .into(),
+    })
+}
+
+/// Convert Tera v2 [`Kwargs`] into a plain `HashMap<String, serde_json::Value>`.
+pub fn kwargs_to_map(kwargs: &Kwargs) -> HashMap<String, Value> {
+    kwargs
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.to_string(),
+                serde_json::to_value(v).unwrap_or(Value::Null),
+            )
+        })
+        .collect()
 }
 
 /// Loco initializer for the Rhai scripting engine with custom setup.
