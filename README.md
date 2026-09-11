@@ -205,20 +205,20 @@ rapid iterations and changes without recompiling.
 /// for display with i18n support...
 fn status(vars) {
     switch this {
-        case "P" => t("Pending", lang),
-        case "A" => t("Active", lang),
-        case "C" => t("Cancelled", lang),
-        case "X" => t("Deleted", lang),
+        "P" => t("Pending", lang),
+        "A" => t("Active", lang),
+        "C" => t("Cancelled", lang),
+        "X" => t("Deleted", lang),
     }
 }
 
 /// Use script to inject HTML also!
 /// The input value is used to select from the list of options
 fn all_status(vars) {`
-    <option value="P" ${if this == "P" { "selected" }}>t("Pending", lang)</option>
-    <option value="A" ${if this == "A" { "selected" }}>t("Active", lang)</option>
-    <option value="C" ${if this == "C" { "selected" }}>t("Cancelled", lang)</option>
-    <option value="X" ${if this == "X" { "selected" }}>t("Deleted", lang)</option>
+    <option value="P" ${if this == "P" { "selected" }}>${t("Pending", lang)}</option>
+    <option value="A" ${if this == "A" { "selected" }}>${t("Active", lang)}</option>
+    <option value="C" ${if this == "C" { "selected" }}>${t("Cancelled", lang)}</option>
+    <option value="X" ${if this == "X" { "selected" }}>${t("Deleted", lang)}</option>
 `}
 
 /// Say we have CSS classes that we need to add based on certain data values
